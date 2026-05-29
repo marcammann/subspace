@@ -5,19 +5,18 @@ from typing import Any, get_type_hints
 
 from subspace.middleware.base import Middleware, NextHandler
 from subspace.middleware.context import RequestContext
-from subspace.models.common import Status, Usage
+from subspace.middleware.utils.events import offset_output_index
+from subspace.models.agent import AgentCapabilities
+from subspace.models.common import ResponseError, Status, Usage
 from subspace.models.events import (
     ResponseCompletedEvent,
-    ResponseContentPartAddedEvent,
-    ResponseContentPartDoneEvent,
     ResponseCreatedEvent,
+    ResponseFailedEvent,
     ResponseFunctionCallArgsDeltaEvent,
     ResponseFunctionCallArgsDoneEvent,
     ResponseInProgressEvent,
     ResponseOutputItemAddedEvent,
     ResponseOutputItemDoneEvent,
-    ResponseOutputTextDeltaEvent,
-    ResponseOutputTextDoneEvent,
     StreamEvent,
 )
 from subspace.models.items import (
@@ -87,6 +86,8 @@ class FunctionCallMiddleware(Middleware):
     For functions that need more control, override on_function_call directly.
     """
 
+    max_tool_roundtrips = 8
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         functions: dict[str, tuple[FunctionTool, Callable]] = {}
@@ -112,6 +113,10 @@ class FunctionCallMiddleware(Middleware):
             functions_to_inject = [tool for tool, _ in self._registered_functions.values()]
             existing = ctx.request.tools or []
             ctx.request = ctx.request.model_copy(update={"tools": existing + functions_to_inject})
+
+    def transform_capabilities(self, capabilities: AgentCapabilities) -> AgentCapabilities:
+        """Mark server-side tool execution as available for this chain."""
+        return capabilities.model_copy(update={"function_tools": True, "server_tools": True})
 
     async def __call__(
         self,
@@ -144,7 +149,7 @@ class FunctionCallMiddleware(Middleware):
                     continue
 
                 if round_num > 0:
-                    event = _offset_output_index(event, len(all_output))
+                    event = offset_output_index(event, len(all_output))
 
                 if isinstance(event, ResponseCompletedEvent):
                     if event.response.usage:
@@ -193,6 +198,10 @@ class FunctionCallMiddleware(Middleware):
                                     item=server_call,
                                 )
                                 round_items.append(item)
+                            else:
+                                for buffered_event in fc_buffers.get(item.id, []):
+                                    yield buffered_event
+                                round_items.append(item)
 
                         if item_id:
                             fc_buffers.pop(item_id, None)
@@ -223,6 +232,23 @@ class FunctionCallMiddleware(Middleware):
 
             if not results:
                 break
+            if round_num >= self.max_tool_roundtrips:
+                yield ResponseFailedEvent(
+                    sequence_number=seq,
+                    response=ctx.response.model_copy(
+                        update={
+                            "status": Status.FAILED,
+                            "output": all_output,
+                            "usage": total_usage,
+                            "error": ResponseError(
+                                message="Maximum server tool round-trips exceeded",
+                                type="server_error",
+                                code="max_tool_roundtrips_exceeded",
+                            ),
+                        }
+                    ),
+                )
+                return
 
             current_input = ctx.request.input
             outputs = [
@@ -325,25 +351,3 @@ def _get_item_id(event: StreamEvent) -> str | None:
     if isinstance(event, (ResponseFunctionCallArgsDeltaEvent, ResponseFunctionCallArgsDoneEvent)):
         return event.item_id
     return None
-
-
-def _offset_output_index(event: StreamEvent, offset: int) -> StreamEvent:
-    if offset == 0:
-        return event
-
-    if isinstance(
-        event,
-        (
-            ResponseOutputItemAddedEvent,
-            ResponseOutputItemDoneEvent,
-            ResponseContentPartAddedEvent,
-            ResponseContentPartDoneEvent,
-            ResponseOutputTextDeltaEvent,
-            ResponseOutputTextDoneEvent,
-            ResponseFunctionCallArgsDeltaEvent,
-            ResponseFunctionCallArgsDoneEvent,
-        ),
-    ):
-        return event.model_copy(update={"output_index": event.output_index + offset})
-
-    return event

@@ -1,6 +1,18 @@
 from subspace.fastapi.app import SubspaceApp
 from subspace.fastapi.lifespan import combine_lifespans
-from subspace.fastapi.mount import SubspaceMount
-from subspace.fastapi.openresponses import OpenResponsesInterface
+from subspace.fastapi.mount import Interface, SubspaceMount
+from subspace.fastapi.routers import (
+    AnthropicMessagesRouter,
+    ChatCompletionsRouter,
+    OpenResponsesRouter,
+)
 
-__all__ = ["OpenResponsesInterface", "SubspaceApp", "SubspaceMount", "combine_lifespans"]
+__all__ = [
+    "AnthropicMessagesRouter",
+    "ChatCompletionsRouter",
+    "Interface",
+    "OpenResponsesRouter",
+    "SubspaceApp",
+    "SubspaceMount",
+    "combine_lifespans",
+]

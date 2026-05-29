@@ -3,7 +3,13 @@ from typing import TYPE_CHECKING
 
 from subspace.middleware.base import Middleware, NextHandler
 from subspace.middleware.context import RequestContext, request_state
-from subspace.models.events import StreamEvent
+from subspace.middleware.utils import StreamTracker
+from subspace.models.events import (
+    ResponseCompletedEvent,
+    ResponseFailedEvent,
+    ResponseIncompleteEvent,
+    StreamEvent,
+)
 
 if TYPE_CHECKING:
     from subspace.backends.base import Backend
@@ -20,16 +26,31 @@ class MiddlewareChain:
         for mw in reversed(self._middlewares):
             handler = _wrap(mw, handler)
 
+        tracker = StreamTracker()
         token = request_state.set(ctx.state)
         try:
             async for event in handler(ctx):
+                tracker.track(event)
+
+                if isinstance(
+                    event,
+                    (ResponseCompletedEvent, ResponseIncompleteEvent, ResponseFailedEvent),
+                ):
+                    event = event.model_copy(
+                        update={
+                            "response": event.response.model_copy(
+                                update={"output": tracker.completed_items}
+                            )
+                        }
+                    )
+
                 yield event
         finally:
             request_state.reset(token)
             await self.finalize(ctx)
 
     async def finalize(self, ctx: RequestContext) -> None:
-        for mw in self._middlewares:
+        for mw in reversed(self._middlewares):
             if ctx.prepared(mw):
                 await mw.finalize(ctx)
 

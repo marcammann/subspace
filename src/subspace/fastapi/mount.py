@@ -1,14 +1,18 @@
 from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
+
+from fastapi import APIRouter
 
 from subspace.backends.base import Backend
-from subspace.core import Subspace
+from subspace.core import Agent, Subspace
 from subspace.middleware.base import Middleware
 from subspace.middleware.context import RequestContext
+from subspace.models.agent import AgentRuntime, Skill
 
-if TYPE_CHECKING:
-    from subspace.fastapi.openresponses import OpenResponsesInterface
+
+class Interface(Protocol):
+    def build_router(self, mount: "SubspaceMount") -> APIRouter: ...
 
 
 class SubspaceMount:
@@ -17,9 +21,9 @@ class SubspaceMount:
         mount = SubspaceMount(
             deps=get_deps,
             context_class=MyContext,
-            interfaces=[OpenResponsesInterface(prefix="/v1")],
+            interfaces=[OpenResponsesRouter(prefix="/v1")],
         )
-        mount.model("claude", backend=litellm, middlewares=[mcp])
+        weather = mount.agent("weather", backend=litellm, middlewares=[mcp])
 
         app = SubspaceApp(mount)
     """
@@ -28,7 +32,7 @@ class SubspaceMount:
         self,
         subspace: Subspace | None = None,
         *,
-        interfaces: Sequence["OpenResponsesInterface"] = (),
+        interfaces: Sequence[Interface] = (),
         middlewares: Sequence[Middleware] = (),
         lifespan: Sequence[AbstractAsyncContextManager[Any]] = (),
         deps: Callable[..., Any] | None = None,
@@ -46,14 +50,21 @@ class SubspaceMount:
         return self._subspace
 
     @property
-    def interfaces(self) -> list["OpenResponsesInterface"]:
+    def interfaces(self) -> list[Interface]:
         return self._interfaces
 
-    def model(
+    def agent(
         self,
         name: str,
         *,
         backend: Backend,
         middlewares: Sequence[Middleware] = (),
-    ) -> None:
-        self._subspace.model(name, backend=backend, middlewares=middlewares)
+        description: str = "",
+        skills: Sequence[Skill] = (),
+        runtime: AgentRuntime = AgentRuntime.INLINE,
+    ) -> Agent:
+        return self._subspace.agent(
+            name, backend=backend, middlewares=middlewares,
+            description=description, skills=skills,
+            runtime=runtime,
+        )

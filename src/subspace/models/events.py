@@ -1,6 +1,6 @@
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from subspace.models.content import OutputContent
 from subspace.models.items import OutputItem
@@ -105,7 +105,7 @@ class ErrorEvent(BaseStreamEvent):
     message: str
 
 
-StreamEvent = Annotated[
+type BuiltInStreamEvent = (
     ResponseCreatedEvent
     | ResponseInProgressEvent
     | ResponseCompletedEvent
@@ -119,6 +119,8 @@ StreamEvent = Annotated[
     | ResponseOutputTextDoneEvent
     | ResponseFunctionCallArgsDeltaEvent
     | ResponseFunctionCallArgsDoneEvent
-    | ErrorEvent,
-    Field(discriminator="type"),
-]
+    | ErrorEvent
+)
+type TerminalStreamEvent = ResponseCompletedEvent | ResponseFailedEvent | ResponseIncompleteEvent
+
+type StreamEvent = BaseStreamEvent

@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 
 from subspace.middleware.base import NextHandler
 from subspace.middleware.context import RequestContext
+from subspace.models.agent import AgentCapabilities
 from subspace.models.events import ResponseCompletedEvent, StreamEvent
 
 if TYPE_CHECKING:
@@ -19,6 +20,10 @@ class ConversationHistoryMiddleware:
 
     def __init__(self, storage: "Storage") -> None:
         self._storage = storage
+
+    def transform_capabilities(self, capabilities: AgentCapabilities) -> AgentCapabilities:
+        """Mark previous_response_id conversation history as available."""
+        return capabilities.model_copy(update={"conversation_history": True})
 
     async def __call__(
         self,

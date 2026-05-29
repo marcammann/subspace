@@ -1,27 +1,32 @@
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from subspace.models.common import Role, Status
 from subspace.models.content import InputContent, OutputContent
 
 
-class InputMessage(BaseModel):
+class BaseItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    type: str  # subclasses narrow this to a Literal
+
+
+class InputMessage(BaseItem):
     type: Literal["message"] = "message"
     role: Role
     content: str | list[InputContent]
     status: Status | None = None
 
 
-class OutputMessage(BaseModel):
+class OutputMessage(BaseItem):
     type: Literal["message"] = "message"
     id: str
     role: Literal[Role.ASSISTANT] = Role.ASSISTANT
-    content: list[OutputContent] = []
+    content: list[OutputContent] = Field(default_factory=list)
     status: Status = Status.IN_PROGRESS
 
 
-class FunctionCall(BaseModel):
+class FunctionCall(BaseItem):
     type: Literal["function_call"] = "function_call"
     id: str
     name: str
@@ -30,13 +35,13 @@ class FunctionCall(BaseModel):
     status: Status = Status.IN_PROGRESS
 
 
-class FunctionCallOutput(BaseModel):
+class FunctionCallOutput(BaseItem):
     type: Literal["function_call_output"] = "function_call_output"
     call_id: str
     output: str
 
 
-class ServerFunctionCall(BaseModel):
+class ServerFunctionCall(BaseItem):
     """A tool call that was executed server-side by a middleware.
 
     Unlike FunctionCall (which signals the client should execute the tool),

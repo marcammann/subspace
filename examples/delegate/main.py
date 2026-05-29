@@ -1,7 +1,8 @@
-"""Delegation example: a triage agent delegates to specialists.
+"""Delegation example: a multi-agent backend delegates to specialists.
 
-Three LangChain agents: a triage agent that delegates to either a
-weather agent or a time agent depending on the question.
+A multi-agent backend fronts two specialists: a weather agent and a time agent.
+Only the public "assistant" agent is exposed through the API — the specialists
+are internal.
 
 Run:
     uv run python -m examples.delegate
@@ -9,29 +10,29 @@ Run:
 Then:
     curl -N -X POST http://localhost:8001/v1/responses \
       -H "Content-Type: application/json" \
-      -d '{"model": "triage", "input": "What time is it?", "stream": true}'
+      -d '{"model": "assistant", "input": "What is the weather in Berlin?", "stream": true}'
 
     curl -N -X POST http://localhost:8001/v1/responses \
       -H "Content-Type: application/json" \
-      -d '{"model": "triage", "input": "What is the weather in Berlin?", "stream": true}'
+      -d '{"model": "assistant", "input": "What time is it?", "stream": true}'
 """
 
-from datetime import UTC, datetime
+import logging
 
 import uvicorn
-from langchain.agents import create_agent
-from langchain.agents.middleware import HumanInTheLoopMiddleware
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.prebuilt import create_react_agent
 
 from subspace import (
-    OpenResponsesInterface,
+    OpenResponsesRouter,
     RequestContext,
+    Subspace,
     SubspaceApp,
     SubspaceMount,
 )
+from subspace.backends.multi_agent import MultiAgentBackend
 from subspace.contrib.backends.langchain import LangchainBackend
-from subspace.contrib.middleware.delegate import DelegateMiddleware
 from subspace.contrib.middleware.logging import LoggingMiddleware
 
 
@@ -44,66 +45,61 @@ def get_weather(city: str) -> str:
 @tool
 def get_time() -> str:
     """Get the current UTC time."""
-    return datetime.now(UTC).isoformat()
+    return "12:00"
 
 
-memory = InMemorySaver()
+def make_weather(ctx: RequestContext, interrupt_tools: list):
+    in_memory_saver = InMemorySaver()
 
-
-def make_triage(ctx: RequestContext):
-    return create_agent(
+    return create_react_agent(
         "anthropic:claude-sonnet-4-6",
-        system_prompt=(
-            "You are a triage agent. You cannot answer questions yourself. "
-            "Delegate weather questions to the 'weather' model "
-            "and time questions to the 'time' model."
-        ),
-        tools=[],
-        middleware=[HumanInTheLoopMiddleware(interrupt_on={"delegate_to": True})],
-        checkpointer=memory,
+        prompt="You are a weather assistant. Use the get_weather tool to answer weather questions. "
+        "If asked about something other than weather, delegate to a more appropriate agent.",
+        tools=[get_weather] + interrupt_tools,
+        checkpointer=in_memory_saver,
     )
 
 
-def make_weather(ctx: RequestContext):
-    return create_agent(
-        "anthropic:claude-sonnet-4-6",
-        system_prompt="You are a weather assistant. Use the get_weather tool to answer.",
-        tools=[get_weather],
-    )
+def make_time(ctx: RequestContext, interrupt_tools: list):
+    in_memory_saver = InMemorySaver()
 
-
-def make_time(ctx: RequestContext):
-    return create_agent(
+    return create_react_agent(
         "anthropic:claude-sonnet-4-6",
-        system_prompt="You are a time assistant. Use the get_time tool to answer.",
-        tools=[get_time],
+        prompt="You are a time assistant. Use the get_time tool to answer time questions. "
+        "If asked about something other than time, delegate to a more appropriate agent.",
+        tools=[get_time] + interrupt_tools,
+        checkpointer=in_memory_saver,
     )
 
 
 def main() -> None:
-    mount = SubspaceMount(
-        interfaces=[OpenResponsesInterface(prefix="/v1")],
-    )
+    # Internal agents — not exposed through the API
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 
-    mount.model(
+    internal = Subspace()
+    weather = internal.agent(
         "weather",
         backend=LangchainBackend(make_weather),
         middlewares=[LoggingMiddleware()],
+        description="Answers weather questions for any city.",
     )
-
-    mount.model(
+    time_agent = internal.agent(
         "time",
         backend=LangchainBackend(make_time),
         middlewares=[LoggingMiddleware()],
+        description="Returns the current UTC time.",
     )
 
-    mount.model(
-        "triage",
-        backend=LangchainBackend(make_triage),
-        middlewares=[
-            LoggingMiddleware(),
-            DelegateMiddleware(mount.subspace, available_models=["weather", "time"]),
-        ],
+    # Only the multi-agent entry point is public
+    mount = SubspaceMount(
+        interfaces=[OpenResponsesRouter(prefix="/v1")],
+    )
+    mount.agent(
+        "assistant",
+        backend=MultiAgentBackend(agents=[weather, time_agent]),
     )
 
     app = SubspaceApp(mount, title="Subspace Delegate Example")

@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
+from subspace.core import is_async_context_manager
 from subspace.fastapi.mount import SubspaceMount
 
 
@@ -11,9 +12,9 @@ class SubspaceApp(FastAPI):
     """FastAPI application that manages SubspaceMount lifecycles.
 
         mount = SubspaceMount(
-            interfaces=[OpenResponsesInterface(prefix="/v1")],
+            interfaces=[OpenResponsesRouter(prefix="/v1")],
         )
-        mount.model("claude", backend=litellm, middlewares=[mcp])
+        mount.agent("claude", backend=litellm, middlewares=[mcp])
 
         app = SubspaceApp(mount)
     """
@@ -32,10 +33,17 @@ class SubspaceApp(FastAPI):
     async def _lifespan(app: "SubspaceApp") -> AsyncIterator[dict[str, Any]]:
         async with AsyncExitStack() as stack:
             seen: set[int] = set()
+            seen_middlewares: set[int] = set()
             for mount in app._mounts:
                 if id(mount.subspace) not in seen:
                     seen.add(id(mount.subspace))
                     await stack.enter_async_context(mount.subspace)
+                for middleware in mount.middlewares:
+                    if id(middleware) in seen_middlewares:
+                        continue
+                    seen_middlewares.add(id(middleware))
+                    if is_async_context_manager(middleware):
+                        await stack.enter_async_context(middleware)
                 for ctx in mount.lifespan:
                     await stack.enter_async_context(ctx)
             yield {}

@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator, Callable
 
 from subspace.middleware.context import RequestContext
+from subspace.models.agent import AgentCapabilities
 from subspace.models.events import StreamEvent
 
 type NextHandler = Callable[[RequestContext], AsyncIterator[StreamEvent]]
@@ -20,6 +21,10 @@ class Middleware:
 
     async def finalize(self, ctx: RequestContext) -> None:
         """Called once per request, after the stream ends. Clean up resources here."""
+
+    def transform_capabilities(self, capabilities: AgentCapabilities) -> AgentCapabilities:
+        """Return capabilities after this middleware is applied to a backend."""
+        return capabilities
 
     def __call__(
         self,

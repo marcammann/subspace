@@ -1,29 +1,27 @@
 import time
 import uuid
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sse_starlette import EventSourceResponse
 
-from subspace.core import ModelNotFoundError, Subspace
-from subspace.middleware.context import RequestContext
+from subspace.core import AgentNotFoundError
 from subspace.models.common import Status
-from subspace.models.events import ErrorEvent, ResponseCompletedEvent
+from subspace.models.events import ErrorEvent
 from subspace.models.request import CreateResponseRequest
 from subspace.models.response import ResponseResource
 from subspace.streaming.sse import stream_to_sse
+
+from ._shared import collect_terminal_response, no_deps, openai_error_response
 
 if TYPE_CHECKING:
     from subspace.fastapi.mount import SubspaceMount
 
 
-async def _no_deps() -> None:
-    return None
+class OpenResponsesRouter:
+    """Router for the OpenAI Responses-compatible interface."""
 
-
-class OpenResponsesInterface:
     def __init__(self, *, prefix: str = "/v1") -> None:
         self._prefix = prefix
 
@@ -31,27 +29,25 @@ class OpenResponsesInterface:
         router = APIRouter(prefix=self._prefix)
         subspace = mount.subspace
         interface_mw = list(mount.middlewares)
-        deps_getter = mount.deps or _no_deps
+        deps_getter = mount.deps or no_deps
         context_class = mount.context_class
+
+        deps_dependency = Depends(deps_getter)
 
         @router.post("/responses")
         async def create_response(
             request: Request,
             body: CreateResponseRequest,
-            deps: Any = Depends(deps_getter),
+            deps: Any = deps_dependency,
         ):
             try:
                 chain = subspace.build_chain(body.model, interface_mw)
-            except ModelNotFoundError:
-                return JSONResponse(
+            except AgentNotFoundError:
+                return openai_error_response(
                     status_code=404,
-                    content={
-                        "error": {
-                            "message": f"Model not found: {body.model}",
-                            "type": "not_found",
-                            "code": "model_not_found",
-                        }
-                    },
+                    message=f"Model not found: {body.model}",
+                    error_type="not_found",
+                    code="model_not_found",
                 )
 
             response_id = f"resp_{uuid.uuid4().hex[:24]}"
@@ -80,11 +76,11 @@ class OpenResponsesInterface:
 
         @router.get("/models")
         async def list_models():
-            models = subspace.list_models()
+            agents = subspace.list_agents()
             return {
                 "object": "list",
                 "data": [
-                    {"id": name, "object": "model", "owned_by": "subspace"} for name in models
+                    {"id": name, "object": "model", "owned_by": "subspace"} for name in agents
                 ],
             }
 
@@ -106,21 +102,13 @@ async def _stream_response(chain, ctx):
 
 
 async def _non_stream_response(chain, ctx):
-    final = None
-    async for event in chain.execute(ctx):
-        if isinstance(event, ResponseCompletedEvent):
-            final = event.response
-
+    final = await collect_terminal_response(chain, ctx)
     if final is None:
-        return JSONResponse(
+        return openai_error_response(
             status_code=502,
-            content={
-                "error": {
-                    "message": "No completed response from backend",
-                    "type": "server_error",
-                    "code": "server_error",
-                }
-            },
+            message="No terminal response from backend",
+            error_type="server_error",
+            code="server_error",
         )
 
     return JSONResponse(content=final.model_dump(mode="json"))

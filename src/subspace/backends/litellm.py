@@ -1,10 +1,15 @@
+import logging
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import litellm
 
+if TYPE_CHECKING:
+    from litellm import CustomStreamWrapper
+
 from subspace.backends.response_builder import ResponseBuilder
 from subspace.middleware.context import RequestContext
+from subspace.models.agent import AgentCapabilities
 from subspace.models.common import Usage
 from subspace.models.content import (
     InputImageContent,
@@ -18,6 +23,8 @@ from subspace.models.items import (
     InputMessage,
     OutputMessage,
 )
+
+logger = logging.getLogger("subspace.litellm")
 
 
 class LitellmBackend:
@@ -33,6 +40,16 @@ class LitellmBackend:
         self._api_base = api_base
         self._extra = extra or {}
 
+    @property
+    def capabilities(self) -> AgentCapabilities:
+        """Capabilities provided by LiteLLM-compatible chat providers."""
+        return AgentCapabilities(
+            streaming=True,
+            text_input=True,
+            image_input=True,
+            function_tools=True,
+        )
+
     async def handle(self, ctx: RequestContext) -> AsyncIterator[StreamEvent]:
         builder = ResponseBuilder(ctx.response)
         for event in builder.start():
@@ -42,9 +59,20 @@ class LitellmBackend:
         kwargs = self._build_kwargs(ctx, messages)
 
         try:
-            stream = await litellm.acompletion(**kwargs)
+            stream = cast("CustomStreamWrapper", await litellm.acompletion(**kwargs))
 
             async for chunk in stream:
+                chunk_usage = getattr(chunk, "usage", None)
+                if chunk_usage:
+                    builder.set_usage(
+                        Usage(
+                            input_tokens=chunk_usage.prompt_tokens or 0,
+                            output_tokens=chunk_usage.completion_tokens or 0,
+                            total_tokens=(chunk_usage.prompt_tokens or 0)
+                            + (chunk_usage.completion_tokens or 0),
+                        )
+                    )
+
                 choice = chunk.choices[0] if chunk.choices else None
                 if choice is None:
                     continue
@@ -64,19 +92,6 @@ class LitellmBackend:
                             arguments=tc.function.arguments,
                         ):
                             yield event
-
-                if chunk.usage:
-                    builder.set_usage(
-                        Usage(
-                            input_tokens=chunk.usage.prompt_tokens or 0,
-                            output_tokens=chunk.usage.completion_tokens or 0,
-                            total_tokens=(chunk.usage.prompt_tokens or 0)
-                            + (chunk.usage.completion_tokens or 0),
-                        )
-                    )
-
-                if choice.finish_reason:
-                    break
 
             for event in builder.finish():
                 yield event

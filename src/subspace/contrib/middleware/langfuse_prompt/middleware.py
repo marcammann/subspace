@@ -52,8 +52,9 @@ if TYPE_CHECKING:
 class LangfusePromptMiddleware:
     """Fetches a prompt from Langfuse and injects it into the request.
 
-    Text prompts are merged into the request's instructions field.
-    Chat prompts are prepended to the request's input as messages.
+    Text prompts are added as instruction layers via ``ctx.add_instructions``.
+    Chat prompts have their system messages added as instruction layers
+    and non-system messages appended to the request input.
 
     The prompt's config dict (set in the Langfuse UI) is merged into
     ctx.state["langfuse_prompt_config"] for downstream middlewares
@@ -68,7 +69,6 @@ class LangfusePromptMiddleware:
         version: int | None = None,
         label: str | None = None,
         variables: dict[str, str] | Callable[[RequestContext], dict[str, str]] | None = None,
-        position: str = "prepend",
         cache_ttl_seconds: int | None = None,
         fallback: str | list[dict[str, str]] | None = None,
         langfuse: "Langfuse | None" = None,
@@ -78,7 +78,6 @@ class LangfusePromptMiddleware:
         self._version = version
         self._label = label
         self._variables = variables
-        self._position = position
         self._cache_ttl_seconds = cache_ttl_seconds
         self._fallback = fallback
         self._langfuse = langfuse
@@ -139,14 +138,7 @@ class LangfusePromptMiddleware:
         variables: dict[str, str],
     ) -> None:
         compiled = prompt.compile(**variables) if variables else prompt.prompt
-        existing = ctx.request.instructions or ""
-
-        if self._position == "prepend":
-            merged = f"{compiled}\n\n{existing}".strip()
-        else:
-            merged = f"{existing}\n\n{compiled}".strip()
-
-        ctx.request = ctx.request.model_copy(update={"instructions": merged})
+        ctx.add_instructions(compiled)
 
     def _apply_chat_prompt(
         self,
@@ -162,22 +154,12 @@ class LangfusePromptMiddleware:
             content = msg.get("content", "")
 
             if role == "system":
-                existing = ctx.request.instructions or ""
-                if self._position == "prepend":
-                    merged = f"{content}\n\n{existing}".strip()
-                else:
-                    merged = f"{existing}\n\n{content}".strip()
-                ctx.request = ctx.request.model_copy(update={"instructions": merged})
+                ctx.add_instructions(content)
                 continue
 
             messages.append(InputMessage(role=Role(role), content=content))
 
         if messages:
             existing_items = list(ctx.request.input)
-
-            if self._position == "prepend":
-                new_input = list(messages) + existing_items
-            else:
-                new_input = existing_items + list(messages)
-
+            new_input = existing_items + list(messages)
             ctx.request = ctx.request.model_copy(update={"input": new_input})

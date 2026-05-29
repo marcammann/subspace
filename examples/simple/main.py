@@ -18,7 +18,7 @@ from pydantic import Field
 
 from subspace import (
     FunctionCallMiddleware,
-    OpenResponsesInterface,
+    OpenResponsesRouter,
     RequestContext,
     SubspaceApp,
     SubspaceMount,
@@ -46,9 +46,9 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     mount = SubspaceMount(
-        interfaces=[OpenResponsesInterface(prefix="/v1")],
+        interfaces=[OpenResponsesRouter(prefix="/v1")],
     )
-    mount.model(
+    mount.agent(
         "agent",
         backend=LangchainBackend(make_agent),
         middlewares=[LoggingMiddleware(), TimeToolMiddleware()],

@@ -6,29 +6,26 @@ from subspace.models.events import StreamEvent
 
 
 class InstructionInjectorMiddleware:
-    """Merges static system instructions into the request.
+    """Injects instructions into the request via a template.
 
-    Prepends or appends the configured instructions to whatever instructions
-    the request already carries. Useful for injecting persona, constraints, or
-    formatting rules at the model or interface level.
+    If the template contains ``{instructions}``, the existing request
+    instructions are substituted at that position.  Otherwise the template
+    text is appended after any existing instructions.
+
+    Multiple injectors compose correctly: outer middleware templates wrap
+    inner ones because the resolution is deferred until ``ctx.request``
+    is read.
     """
 
-    def __init__(self, instructions: str, position: str = "prepend") -> None:
+    def __init__(self, instructions: str) -> None:
         self._instructions = instructions
-        self._position = position
 
     async def __call__(
         self,
         ctx: RequestContext,
         call_next: NextHandler,
     ) -> AsyncIterator[StreamEvent]:
-        existing = ctx.request.instructions or ""
-        if self._position == "prepend":
-            merged = f"{self._instructions}\n\n{existing}".strip()
-        else:
-            merged = f"{existing}\n\n{self._instructions}".strip()
-
-        ctx.request = ctx.request.model_copy(update={"instructions": merged})
+        ctx.add_instructions(self._instructions)
 
         async for event in call_next(ctx):
             yield event

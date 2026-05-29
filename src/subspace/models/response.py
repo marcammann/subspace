@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from subspace.models.common import ResponseError, Status, Usage
 from subspace.models.items import InputItem, OutputItem
@@ -13,8 +13,8 @@ class ResponseResource(BaseModel):
     created_at: int
     status: Status = Status.IN_PROGRESS
     model: str
-    input: list[InputItem] = []
-    output: list[OutputItem] = []
+    input: list[InputItem] = Field(default_factory=list)
+    output: list[OutputItem] = Field(default_factory=list)
     instructions: str | None = None
     tools: list[Tool] | None = None
     tool_choice: ToolChoice | None = None

@@ -9,7 +9,7 @@ from subspace.models.tools import Tool, ToolChoice
 
 class CreateResponseRequest(BaseModel):
     model: str
-    input: list[AnyItem] = []
+    input: list[AnyItem] = Field(default_factory=list)
     instructions: str | None = None
     tools: list[Tool] | None = None
     tool_choice: ToolChoice | None = None

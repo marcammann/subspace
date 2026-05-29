@@ -1,14 +1,19 @@
 from subspace.backends.base import Backend
-from subspace.backends.echo import EchoBackend
 from subspace.backends.litellm import LitellmBackend
-from subspace.contrib.middleware.delegate import DelegateMiddleware
+from subspace.backends.multi_agent import MultiAgentBackend
 from subspace.contrib.middleware.instruction_injector import (
     InstructionInjectorMiddleware,
 )
 from subspace.contrib.middleware.langfuse_prompt import LangfusePromptMiddleware
 from subspace.contrib.middleware.logging import LoggingMiddleware
-from subspace.core import ModelNotFoundError, Subspace
-from subspace.fastapi import OpenResponsesInterface, SubspaceApp, SubspaceMount
+from subspace.core import Agent, AgentNotFoundError, Subspace
+from subspace.fastapi import (
+    AnthropicMessagesRouter,
+    ChatCompletionsRouter,
+    OpenResponsesRouter,
+    SubspaceApp,
+    SubspaceMount,
+)
 from subspace.middleware.base import Middleware, NextHandler
 from subspace.middleware.chain import MiddlewareChain
 from subspace.middleware.context import RequestContext
@@ -19,16 +24,29 @@ from subspace.middleware.conversation_history import (
 from subspace.middleware.function_call import FunctionCallMiddleware, server_tool
 from subspace.middleware.mcp import McpMiddleware
 from subspace.middleware.stream import StreamMiddleware
-from subspace.middleware.stream_aggregator import StreamAggregatorMiddleware
-from subspace.models.events import StreamEvent
+from subspace.models.agent import (
+    AgentCapabilities,
+    AgentCard,
+    AgentRuntime,
+    CapabilityRequirement,
+    Skill,
+)
+from subspace.models.events import BuiltInStreamEvent, StreamEvent, TerminalStreamEvent
 from subspace.models.items import ServerFunctionCall
 
 __all__ = [
+    "Agent",
+    "AgentCapabilities",
+    "AgentCard",
+    "AgentRuntime",
+    "AgentNotFoundError",
+    "AnthropicMessagesRouter",
     "Backend",
-    "FunctionCallMiddleware",
+    "BuiltInStreamEvent",
+    "CapabilityRequirement",
+    "ChatCompletionsRouter",
     "ConversationHistoryMiddleware",
-    "DelegateMiddleware",
-    "EchoBackend",
+    "FunctionCallMiddleware",
     "InMemoryStorage",
     "InstructionInjectorMiddleware",
     "LangfusePromptMiddleware",
@@ -37,16 +55,17 @@ __all__ = [
     "McpMiddleware",
     "Middleware",
     "MiddlewareChain",
-    "ModelNotFoundError",
+    "MultiAgentBackend",
     "NextHandler",
-    "OpenResponsesInterface",
+    "OpenResponsesRouter",
     "RequestContext",
     "ServerFunctionCall",
-    "StreamAggregatorMiddleware",
+    "Skill",
     "StreamEvent",
     "StreamMiddleware",
     "Subspace",
     "SubspaceApp",
     "SubspaceMount",
+    "TerminalStreamEvent",
     "server_tool",
 ]
