@@ -17,6 +17,8 @@ middleware, so an agent can be called directly, routed through another agent,
 mounted behind an OpenAI-compatible API, used from AG-UI, or evaluated as if it
 were a model.
 
+[Skip to the examples](#simple-examples)
+
 ## Why this exists
 
 Subspace came out of a few very practical problems:
